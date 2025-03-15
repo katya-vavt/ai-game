@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Игра "Три в ряд" — тёмная тема с бомбочкой и объемом</title>
+    <style>
+        /* Тёмная тема */
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #222;
+            color: #ddd;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            margin-bottom: 10px;
+        }
+        #score {
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+        /* Игровое поле */
+        #game-board {
+            position: relative;
+            width: 400px;  /* 8 колонок по 50px */
+            height: 400px; /* 8 рядов по 50px */
+            border: 2px solid #555;
+            background-color: #333;
+            margin-bottom: 10px;
+        }
+        /* Сетка (фон) */
+        .cell {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            box-sizing: border-box;
+            border: 1px solid #444;
+        }
+        /* Фигуры */
+        .piece {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            box-sizing: border-box;
+            cursor: pointer;
+            transition: top 0.4s ease, left 0.4s ease;
+            filter: drop-shadow(2px 2px 3px rgba(0, 0, 0, 0.7));
+        }
+        .selected {
+            outline: 3px solid yellow;
+        }
+        button {
+            margin-top: 10px;
+            padding: 8px 16px;
+            font-size: 1em;
+            cursor: pointer;
+            background-color: #444;
+            color: #ddd;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #555;
+        }
+    </style>
+</head>
+<body>
+<h1>Игра "Три в ряд" — тёмная тема</h1>
+<div id="score">Счёт: 0</div>
+<div id="game-board"></div>
+<button id="reset">Начать заново</button>
+
+<script>
+    /********************************************************************
+     * ПАРАМЕТРЫ ИГРЫ
+     ********************************************************************/
+    const ROWS = 8;
+    const COLS = 8;
+    const CELL_SIZE = 50; // размер ячейки в пикселях
+
+    // Для обычных фигур используем фиксированные цвета:
+    // circle  – красный, square – зелёный, triangle – синий,
+    // diamond – оранжевый, star – фиолетовый.
+    const normalShapes = [
+        { shape: "circle",   color: "red" },
+        { shape: "square",   color: "green" },
+        { shape: "triangle", color: "blue" },
+        { shape: "diamond",  color: "orange" },
+        { shape: "star",     color: "purple" }
+    ];
+    // Бомбочка – специальная фигура, которая появляется реже
+    const bombShape = { shape: "bomb", color: "black" };
+    const bombChance = 0.05; // вероятность появления бомбочки (5%)
+
+    // Градиенты для объёма обычных фигур (ключ – цвет фигуры)
+    const gradients = {
+        red:    { light: "#ff8080", dark: "#800000" },
+        green:  { light: "#80ff80", dark: "#008000" },
+        blue:   { light: "#8080ff", dark: "#000080" },
+        orange: { light: "#ffb380", dark: "#804000" },
+        purple: { light: "#e0b3ff", dark: "#800080" }
+    };
+    // Градиент для бомбочки зададим прямо в SVG (оттенки серого)
+
+    let board = []; // двумерный массив игрового поля
+    let score = 0;
+    let firstSelected = null; // для обработки кликов по фигурам
+    let svgIdCounter = 0; // для уникальных id градиентов в SVG
+
+    /********************************************************************
+     * ФУНКЦИИ ВЫБОРА СЛУЧАЙНОГО КАНДИДАТА
+     ********************************************************************/
+    function getRandomCandidate() {
+        // Если выпадает шанс бомбы, возвращаем bombShape
+        if (Math.random() < bombChance) {
+            return bombShape;
+        } else {
+            return normalShapes[Math.floor(Math.random() * normalShapes.length)];
+        }
+    }
+    // Для инициализации поля без начальных совпадений
+    function getRandomCandidateWithoutMatch(r, c, currentRow) {
+        let candidate;
+        let attempts = 0;
+        do {
+            candidate = getRandomCandidate();
+            attempts++;
+        } while (!isValidCandidate(candidate, r, c, currentRow) && attempts < 10);
+        return candidate;
+    }
+    function isValidCandidate(candidate, r, c, currentRow) {
+        // Проверка по горизонтали: если два элемента слева имеют ту же форму,
+        // то кандидат не должен быть таким же.
+        if (c >= 2) {
+            let left1 = currentRow[c - 1];
+            let left2 = currentRow[c - 2];
+            if (left1 && left2 && left1.shape === left2.shape && candidate.shape === left1.shape) {
+                return false;
+            }
+        }
+        // Проверка по вертикали: если два элемента сверху имеют ту же форму,
+        // то кандидат не должен быть таким же.
+        if (r >= 2) {
+            let up1 = board[r - 1][c];
+            let up2 = board[r - 2][c];
+            if (up1 && up2 && up1.shape === up2.shape && candidate.shape === up1.shape) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /********************************************************************
+     * СОЗДАНИЕ ФОНА (СЕТКИ) И ИНИЦИАЛИЗАЦИЯ ПОЛЯ
+     ********************************************************************/
+    function createBoardBackground() {
+        const gameBoard = document.getElementById("game-board");
+        gameBoard.innerHTML = "";
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const cell = document.createElement("div");
+                cell.classList.add("cell");
+                cell.style.top  = (r * CELL_SIZE) + "px";
+                cell.style.left = (c * CELL_SIZE) + "px";
+                gameBoard.appendChild(cell);
+            }
+        }
+    }
+    // Инициализация игрового поля без начальных совпадений
+    function initBoard() {
+        board = [];
+        for (let r = 0; r < ROWS; r++) {
+            const row = [];
+            for (let c = 0; c < COLS; c++) {
+                let candidate = getRandomCandidateWithoutMatch(r, c, row);
+                row.push(createPiece(r, c, candidate.shape, candidate.color));
+            }
+            board.push(row);
+        }
+        updateScore(0);
+    }
+
+    /********************************************************************
+     * СОЗДАНИЕ ФИГУР И ОТОБРАЖЕНИЕ В DOM
+     ********************************************************************/
+    function createPiece(r, c, shape, color) {
+        const pieceElement = document.createElement("div");
+        pieceElement.classList.add("piece");
+        pieceElement.style.left = (c * CELL_SIZE) + "px";
+        pieceElement.style.top  = (r * CELL_SIZE) + "px";
+        pieceElement.dataset.row = r;
+        pieceElement.dataset.col = c;
+        pieceElement.innerHTML = getSVG(shape, color);
+        pieceElement.addEventListener("click", onPieceClick);
+        document.getElementById("game-board").appendChild(pieceElement);
+        return { shape, color, element: pieceElement };
+    }
+
+    // Генерация SVG с эффектом объёма с использованием линейного градиента.
+    // Для бомбочки используется свой вариант (серые оттенки с "фьюзом").
+    function getSVG(shape, color) {
+        let svgContent = "";
+        let gradId = "grad" + (svgIdCounter++);
+        if (shape === "bomb") {
+            svgContent = `
+          <defs>
+            <linearGradient id="${gradId}" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#999" />
+              <stop offset="100%" stop-color="#333" />
+            </linearGradient>
+          </defs>
+          <circle cx="25" cy="25" r="18" fill="url(#${gradId})" />
+          <rect x="23" y="5" width="4" height="10" fill="#555" />
+        `;
+        } else {
+            let grad = gradients[color] || { light: color, dark: color };
+            svgContent = `
+          <defs>
+            <linearGradient id="${gradId}" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="${grad.light}" />
+              <stop offset="100%" stop-color="${grad.dark}" />
+            </linearGradient>
+          </defs>
+        `;
+            switch (shape) {
+                case "circle":
+                    svgContent += `<circle cx="25" cy="25" r="18" fill="url(#${gradId})" />`;
+                    break;
+                case "square":
+                    svgContent += `<rect x="10" y="10" width="30" height="30" fill="url(#${gradId})" />`;
+                    break;
+                case "triangle":
+                    svgContent += `<polygon points="25,8 45,42 5,42" fill="url(#${gradId})" />`;
+                    break;
+                case "diamond":
+                    svgContent += `<polygon points="25,5 45,25 25,45 5,25" fill="url(#${gradId})" />`;
+                    break;
+                case "star":
+                    svgContent += `<polygon points="25,5 30,20 45,20 33,30 38,45 25,35 12,45 17,30 5,20 20,20" fill="url(#${gradId})" />`;
+                    break;
+                default:
+                    svgContent = "";
+            }
+        }
+        return `<svg width="50" height="50" viewBox="0 0 50 50">${svgContent}</svg>`;
+    }
+
+    /********************************************************************
+     * ОБРАБОТКА КЛИКОВ (ПЕРЕСТАНОВКА ФИГУР)
+     ********************************************************************/
+    function onPieceClick(e) {
+        const pieceEl = e.currentTarget;
+        const row = parseInt(pieceEl.dataset.row);
+        const col = parseInt(pieceEl.dataset.col);
+        if (!firstSelected) {
+            firstSelected = { row, col, pieceElement: pieceEl };
+            pieceEl.classList.add("selected");
+        } else {
+            const row2 = row;
+            const col2 = col;
+            const row1 = firstSelected.row;
+            const col1 = firstSelected.col;
+            firstSelected.pieceElement.classList.remove("selected");
+            if (row1 === row2 && col1 === col2) {
+                firstSelected = null;
+                return;
+            }
+            if (isAdjacent(row1, col1, row2, col2)) {
+                swapPieces(row1, col1, row2, col2);
+                updatePiecePositions();
+
+                // Если после перестановки хотя бы одна из фигур – бомба, запускаем взрыв
+                if (board[row1][col1].shape === "bomb" || board[row2][col2].shape === "bomb") {
+                    let bombRow, bombCol;
+                    if (board[row1][col1].shape === "bomb") {
+                        bombRow = row1; bombCol = col1;
+                    } else {
+                        bombRow = row2; bombCol = col2;
+                    }
+                    processBombExplosion(bombRow, bombCol);
+                    updatePiecePositions();
+                    return;
+                }
+                const matched = checkMatches();
+                if (matched.length === 0) {
+                    // Если совпадений нет, возвращаем перестановку
+                    setTimeout(() => {
+                        swapPieces(row2, col2, row1, col1);
+                        updatePiecePositions();
+                    }, 300);
+                } else {
+                    setTimeout(processMatches, 300);
+                }
+            }
+            firstSelected = null;
+        }
+    }
+    function isAdjacent(r1, c1, r2, c2) {
+        const dr = Math.abs(r1 - r2);
+        const dc = Math.abs(c1 - c2);
+        return (dr + dc === 1);
+    }
+    // Меняет две фигуры местами в массиве board
+    function swapPieces(r1, c1, r2, c2) {
+        const temp = board[r1][c1];
+        board[r1][c1] = board[r2][c2];
+        board[r2][c2] = temp;
+        if (board[r1][c1]) {
+            board[r1][c1].element.dataset.row = r1;
+            board[r1][c1].element.dataset.col = c1;
+        }
+        if (board[r2][c2]) {
+            board[r2][c2].element.dataset.row = r2;
+            board[r2][c2].element.dataset.col = c2;
+        }
+    }
+    // Обновление позиций фигур (эффект плавного перемещения благодаря transition)
+    function updatePiecePositions() {
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const piece = board[r][c];
+                if (piece) {
+                    piece.element.style.left = (c * CELL_SIZE) + "px";
+                    piece.element.style.top  = (r * CELL_SIZE) + "px";
+                }
+            }
+        }
+    }
+
+    /********************************************************************
+     * ПОИСК СОВПАДЕНИЙ (ИГНОРИРУЕМ БОМБУ)
+     ********************************************************************/
+    function checkMatches() {
+        let matches = [];
+        // Горизонтальные совпадения (пропускаем, если хоть один элемент – бомба)
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS - 2; c++) {
+                const p1 = board[r][c], p2 = board[r][c+1], p3 = board[r][c+2];
+                if (p1 && p2 && p3 &&
+                    (p1.shape === "bomb" || p2.shape === "bomb" || p3.shape === "bomb") === false &&
+                    p1.shape === p2.shape && p1.shape === p3.shape &&
+                    p1.color === p2.color && p1.color === p3.color) {
+                    matches.push({ row: r, col: c });
+                    matches.push({ row: r, col: c+1 });
+                    matches.push({ row: r, col: c+2 });
+                }
+            }
+        }
+        // Вертикальные совпадения
+        for (let c = 0; c < COLS; c++) {
+            for (let r = 0; r < ROWS - 2; r++) {
+                const p1 = board[r][c], p2 = board[r+1][c], p3 = board[r+2][c];
+                if (p1 && p2 && p3 &&
+                    (p1.shape === "bomb" || p2.shape === "bomb" || p3.shape === "bomb") === false &&
+                    p1.shape === p2.shape && p1.shape === p3.shape &&
+                    p1.color === p2.color && p1.color === p3.color) {
+                    matches.push({ row: r, col: c });
+                    matches.push({ row: r+1, col: c });
+                    matches.push({ row: r+2, col: c });
+                }
+            }
+        }
+        // Убираем дубликаты
+        const unique = [];
+        const used = {};
+        for (let m of matches) {
+            const key = m.row + "-" + m.col;
+            if (!used[key]) {
+                used[key] = true;
+                unique.push(m);
+            }
+        }
+        return unique;
+    }
+
+    /********************************************************************
+     * ОБРАБОТКА СОВПАДЕНИЙ, ПАДЕНИЕ ФИГУР
+     ********************************************************************/
+    function processMatches() {
+        const matched = checkMatches();
+        if (matched.length === 0) return;
+        updateScore(score + matched.length);
+        for (let m of matched) {
+            const piece = board[m.row][m.col];
+            if (piece) {
+                piece.element.remove();
+                board[m.row][m.col] = null;
+            }
+        }
+        dropPieces();
+        updatePiecePositions();
+        setTimeout(() => {
+            if (checkMatches().length > 0) {
+                processMatches();
+            }
+        }, 400);
+    }
+    // "Падение": опускаем фигуры вниз, а пустые ячейки заполняем новыми (используя getRandomCandidate)
+    function dropPieces() {
+        for (let c = 0; c < COLS; c++) {
+            let writeRow = ROWS - 1;
+            for (let r = ROWS - 1; r >= 0; r--) {
+                if (board[r][c]) {
+                    if (writeRow !== r) {
+                        board[writeRow][c] = board[r][c];
+                        board[r][c] = null;
+                        board[writeRow][c].element.dataset.row = writeRow;
+                    }
+                    writeRow--;
+                }
+            }
+            for (let r = writeRow; r >= 0; r--) {
+                let candidate = getRandomCandidate();
+                board[r][c] = createPiece(r, c, candidate.shape, candidate.color);
+            }
+        }
+    }
+
+    /********************************************************************
+     * ВЗРЫВ БОМБОЧКИ
+     ********************************************************************/
+    // Если при перестановке одна из фигур – бомба, взрыв удаляет фигуры в области 3x3 вокруг бомбы
+    function processBombExplosion(bombRow, bombCol) {
+        let cellsDestroyed = [];
+        for (let r = bombRow - 1; r <= bombRow + 1; r++) {
+            for (let c = bombCol - 1; c <= bombCol + 1; c++) {
+                if (r >= 0 && r < ROWS && c >= 0 && c < COLS && board[r][c] != null) {
+                    cellsDestroyed.push({ r, c });
+                }
+            }
+        }
+        cellsDestroyed.forEach(cell => {
+            if (board[cell.r][cell.c]) {
+                board[cell.r][cell.c].element.remove();
+                board[cell.r][cell.c] = null;
+            }
+        });
+        updateScore(score + cellsDestroyed.length);
+        dropPieces();
+        updatePiecePositions();
+        setTimeout(() => {
+            if (checkMatches().length > 0) {
+                processMatches();
+            }
+        }, 400);
+    }
+
+    /********************************************************************
+     * ПРОЧИЕ ФУНКЦИИ
+     ********************************************************************/
+    function updateScore(newScore) {
+        score = newScore;
+        document.getElementById("score").innerText = "Счёт: " + score;
+    }
+    function resetGame() {
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (board[r][c]) {
+                    board[r][c].element.remove();
+                }
+            }
+        }
+        updateScore(0);
+        initBoard();
+        updatePiecePositions();
+    }
+
+    /********************************************************************
+     * СТАРТ ИГРЫ
+     ********************************************************************/
+    window.onload = () => {
+        createBoardBackground();
+        initBoard();
+        updatePiecePositions();
+    };
+    document.getElementById("reset").addEventListener("click", resetGame);
+</script>
+</body>
+</html>
