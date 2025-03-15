@@ -282,6 +282,8 @@
                     }
                     processBombExplosion(bombRow, bombCol);
                     updatePiecePositions();
+                    // Снимаем выделение, чтобы ни один элемент не оставался выделенным
+                    firstSelected = null;
                     return;
                 }
                 const matched = checkMatches();
